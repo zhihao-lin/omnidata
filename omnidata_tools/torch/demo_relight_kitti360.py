@@ -6,6 +6,7 @@ import PIL
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
+import cv2 
 
 import argparse
 import os
@@ -38,7 +39,6 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 # get target task and model
 if args.task == 'normal':
-    image_size = args.img_size
     pretrained_weights_path = root_dir + 'omnidata_dpt_normal_v2.ckpt'
     model = DPTDepthModel(backbone='vitb_rn50_384', num_channels=3) # DPT Hybrid
     checkpoint = torch.load(pretrained_weights_path, map_location=map_location)
@@ -51,12 +51,9 @@ if args.task == 'normal':
 
     model.load_state_dict(state_dict)
     model.to(device)
-    trans_totensor = transforms.Compose([transforms.Resize(image_size, interpolation=PIL.Image.BILINEAR),
-                                        transforms.CenterCrop(image_size),
-                                        get_transform('rgb', image_size=None)])
+    trans_totensor = transforms.Compose([get_transform('rgb', image_size=None)])
 
 elif args.task == 'depth':
-    image_size = args.img_size
     pretrained_weights_path = root_dir + 'omnidata_dpt_depth_v2.ckpt'  # 'omnidata_dpt_depth_v1.ckpt'
     # model = DPTDepthModel(backbone='vitl16_384') # DPT Large
     model = DPTDepthModel(backbone='vitb_rn50_384') # DPT Hybrid
@@ -69,10 +66,9 @@ elif args.task == 'depth':
         state_dict = checkpoint
     model.load_state_dict(state_dict)
     model.to(device)
-    trans_totensor = transforms.Compose([transforms.Resize(image_size, interpolation=PIL.Image.BILINEAR),
-                                        transforms.CenterCrop(image_size),
-                                        transforms.ToTensor(),
-                                        transforms.Normalize(mean=0.5, std=0.5)])
+    trans_totensor = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=0.5, std=0.5)])
 
 else:
     print("task should be one of the following: normal, depth")
@@ -81,6 +77,17 @@ else:
 trans_rgb = transforms.Compose([transforms.Resize(512, interpolation=PIL.Image.BILINEAR),
                                 transforms.CenterCrop(512)])
 
+def depth2img(depth, scale=1):
+    depth = depth/scale
+    depth = np.clip(depth, a_min=0., a_max=1.)
+    depth_img = cv2.applyColorMap((depth*255).astype(np.uint8),
+                                  cv2.COLORMAP_MAGMA)
+    return depth_img
+
+def nearest_multiple(x, base=128):
+    s = np.round(x/base)
+    multiple = int(base * s)
+    return multiple
 
 def standardize_depth_map(img, mask_valid=None, trunc_value=0.1):
     if mask_valid is not None:
@@ -133,13 +140,30 @@ def save_outputs_patch(img_path, save_path):
             trans_topil(final[0]).save(save_path)
 
 def save_output_whole(img_path, save_path):
-    trans = get_transform('rgb', image_size=None)
-    img = Image.open(img_path).resize((1408, 384))
-    img_tensor = trans(img).unsqueeze(0).to(device) # (1, 3, h, w)
+    img = np.array(Image.open(img_path))
+    h, w = img.shape[:2]
+    base = 128
+    h_t, w_t = nearest_multiple(h, base), nearest_multiple(w, base)
+    img_t = cv2.resize(img, (w_t, h_t), interpolation=cv2.INTER_LINEAR)
+    img_tensor = trans_totensor(img_t).unsqueeze(0).to(device) # (1, 3, h, w)
+    if img_tensor.shape[1] == 1:
+        img_tensor = img_tensor.repeat_interleave(3, 1)
+
     output = model(img_tensor).clamp(min=0, max=1)
-    img_out = output[0].permute(1, 2, 0).cpu().detach().numpy()
-    img_out = Image.fromarray((img_out * 255).astype(np.uint8)).resize((1408, 376))
-    img_out.save(save_path)
+    img_out = output[0].cpu().detach().numpy()
+    if args.task == 'normal':
+        img_out = cv2.resize(img_out.transpose(1, 2, 0), (w, h), interpolation=cv2.INTER_LINEAR)
+        img_out = img_out.transpose(2, 0, 1)
+    else:
+        img_out = cv2.resize(img_out, (w, h), interpolation=cv2.INTER_LINEAR)
+    np.save(save_path.replace(".png", ".npy"), img_out)
+    if args.task == 'normal':
+        img_out = cv2.cvtColor(img_out.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)
+        img_out = (img_out*255).astype(np.uint8)
+        cv2.imwrite(save_path, img_out)
+    else:
+        img_out = depth2img(img_out, img_out.max())
+        cv2.imwrite(save_path.replace(".npy", ".png"), img_out)
 
 names = ['{:0>10d}.png'.format(i) for i in range(args.start, args.end+1)]
 source_paths = [os.path.join(args.source_dir, name) for name in names]
