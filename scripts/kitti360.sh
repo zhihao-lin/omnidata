@@ -1,12 +1,12 @@
 python -m omnidata_tools.torch.demo_relight_kitti360.py \
     --source_dir /hdd/datasets/KITTI-360/data_2d_raw/2013_05_28_drive_0000_sync/image_00/data_rect \
-    --output_dir /hdd/datasets/KITTI-360/data_2d_raw/2013_05_28_drive_0000_sync/image_00/normal \
-    --start 0 --end 11517
+    --output_dir /hdd/datasets/KITTI-360/data_2d_raw/2013_05_28_drive_0000_sync/image_00/depth \
+    --start 0 --end 11517 --task depth
 
 python -m omnidata_tools.torch.demo_relight_kitti360.py \
     --source_dir /hdd/datasets/KITTI-360/data_2d_raw/2013_05_28_drive_0000_sync/image_01/data_rect \
-    --output_dir /hdd/datasets/KITTI-360/data_2d_raw/2013_05_28_drive_0000_sync/image_01/normal \
-    --start 0 --end 11517
+    --output_dir /hdd/datasets/KITTI-360/data_2d_raw/2013_05_28_drive_0000_sync/image_01/depth \
+    --start 0 --end 11517 --task depth
 
 # python -m omnidata_tools.torch.demo_relight_kitti360.py \
 #     --source_dir /hdd/datasets/KITTI-360/data_2d_raw/2013_05_28_drive_0003_sync/image_00/data_rect \
