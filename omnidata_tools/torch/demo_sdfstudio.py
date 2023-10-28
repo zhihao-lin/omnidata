@@ -22,8 +22,10 @@ import cv2
 parser = argparse.ArgumentParser(description='Visualize output for depth or surface normals')
 
 parser.add_argument('--task', dest='task', help="normal or depth", default='normal', choices=['depth', 'normal'])
+parser.add_argument('--mode', default='whole', choices=['whole', 'patch'])
 parser.add_argument('--source_dir', help="path to rgb image")
 parser.add_argument('--output_dir', help="path to where output image should be stored")
+parser.add_argument('--img_size', type=int, default=384)
 args = parser.parse_args()
 
 root_dir = '/home/zhi-hao/Desktop/omnidata/omnidata_tools/torch/pretrained_models/'
@@ -110,30 +112,34 @@ def save_outputs_patch(img_path, save_path):
     with torch.no_grad():
         img = np.array(Image.open(img_path))
         h, w, c = np.array(img).shape
-        start_ind = list(range(0, w - h // 4 * 3 , h // 4))
-        start_ind[-1] = w - h
+        h_ind = list(range(0, h - patch // 4 * 3 , patch // 4))
+        h_ind[-1] = h - patch
+        w_ind = list(range(0, w - patch // 4 * 3 , patch // 4))
+        w_ind[-1] = w - patch
 
         final = torch.zeros((1, 3, h, w))
         weights = torch.ones((1, 3, h, w)) * 1e-6
-        for ind in start_ind:
-            img_patch = Image.fromarray(img[:, ind:ind+h])
-            img_tensor = trans_totensor(img_patch)[:3].unsqueeze(0).to(device)
-            if img_tensor.shape[1] == 1:
-                img_tensor = img_tensor.repeat_interleave(3,1)
-            output = model(img_tensor).clamp(min=0, max=1)
-            import torchvision.transforms.functional as F
-            final[:, :, :, ind:ind+h] = final[:, :, :, ind:ind+h] + F.resize(output, h).detach().cpu()
-            weights[:, :, :, ind:ind+h] = weights[:, :, :, ind:ind+h] + 1.0
-        final = final / weights
-
-        if args.task == 'depth':
-            output = output.clamp(0,1)
-            output = 1 - output
-            # output = standardize_depth_map(output)
-            plt.imsave(save_path, output.detach().cpu().squeeze(),cmap='viridis')
-
+        for x in h_ind:
+            for y in w_ind:
+                img_patch = Image.fromarray(img[x:x+patch, y:y+patch])
+                img_tensor = trans_totensor(img_patch)[:3].unsqueeze(0).to(device)
+                if img_tensor.shape[1] == 1:
+                    img_tensor = img_tensor.repeat_interleave(3,1)
+                output = model(img_tensor).clamp(min=0, max=1)
+                final[:, :, x:x+patch, y:y+patch] += output.detach().cpu()
+                weights[:, :, x:x+patch, y:y+patch] += 1.0
+        img_out = (final / weights)[0].cpu().detach().numpy() #(3, h, w)
+        
+        if args.task == 'normal':
+            np.save(save_path, img_out)
+            img_out = cv2.cvtColor(img_out.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)
+            img_out = (img_out*255).astype(np.uint8)
+            cv2.imwrite(save_path.replace(".npy", ".png"), img_out)
         else:
-            trans_topil(final[0]).save(save_path)
+            img_out = img_out[0]
+            np.save(save_path, img_out)
+            img_out = depth2img(img_out, img_out.max())
+            cv2.imwrite(save_path.replace(".npy", ".png"), img_out)
 
 def save_output_whole(img_path, save_path):
     img = np.array(Image.open(img_path))
@@ -166,5 +172,6 @@ output_paths = [os.path.join(args.output_dir, '{}_{}.npy'.format(path.split('/')
 os.makedirs(args.output_dir, exist_ok=True)
 n_path = len(output_paths)
 
+save_func = save_output_whole if args.mode == 'whole' else save_outputs_patch
 for i in tqdm(range(n_path)):
-    save_output_whole(source_paths[i], output_paths[i])
+    save_func(source_paths[i], output_paths[i])
